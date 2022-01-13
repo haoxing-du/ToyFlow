@@ -13,6 +13,7 @@ python toy_ffjord.py
 ```
 
 The output of the acript above creates plots for the base distribution (multidimensional gaussian) and the transformed distribution that we are interested for the density estimation (double moon).
+
 Questions:
 * What is the log probability for the point (0,0.5)?
 * Starting from the point (-0.1,0.6), drawn from a Normal distribution, what is the transformed coordinate in the double moon space?
@@ -25,7 +26,8 @@ Next step is to parametrize the density estimation for values z such that we est
 ```bash
 python toy_conditional.py
 ```
-The outputs of the script are plots of the target distribution (double gaussian) and the conditional target distributions
+The outputs of the script are plots of the target distribution (double gaussian) and the conditional target distributions.
+
 Questions:
 * Where in the base distribution are each of the double gaussians mapped to? (Hint: draw samples from each gaussian separately and run the transformation backwards)
 * Imagine you started with a random point drawn from the 2-gaussian distribution. How would you determine the conditional value this point belongs to? (Hint: In the toy example, z can only assume 2 values z1, and z2, determine the probability of p(x|z1) and p(x|z2))

@@ -40,7 +40,7 @@ class MLP_ODE(keras.Model):
                 ])
         
     @tf.function
-    def call(self, t, data,conditional_input):
+    def call(self, t, data,conditional_input=None):
         if self._num_cond==1:
             #No network for a single feature
             cond_transform=tf.cast(conditional_input,dtype=tf.float32)
@@ -104,8 +104,9 @@ class FFJORD(keras.Model):
         return [self.loss_tracker]
     
     @tf.function
-    def call(self, inputs):
-        pass
+    def call(self, inputs, conditional_input=None):
+        kwargs = make_bijector_kwargs(self.flow.bijector,{'bijector.': {'conditional_input':conditional_input }})
+        return self.flow.bijector.forward(inputs,**kwargs)
         
             
     def Transform(self):        

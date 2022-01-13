@@ -78,8 +78,7 @@ class FFJORD(keras.Model):
     
     @tf.function
     def call(self, inputs):
-        # So that keras does not complain after
-        pass        
+        return self.flow.bijector.forward(inputs)
             
     def Transform(self):        
         return tfd.TransformedDistribution(distribution=self.base_distribution, bijector=self.chain)
