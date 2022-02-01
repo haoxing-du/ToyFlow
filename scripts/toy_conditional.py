@@ -61,16 +61,29 @@ def make_bijector_kwargs(bijector, name_to_kwargs):
                 return kwargs
     return {}
 
+def save_model(model,name="ffjord",checkpoint_dir = '../checkpoints'):
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+    model.save_weights('{}/{}'.format(checkpoint_dir,name,save_format='tf'))
+
+def load_model(model,name="ffjord",checkpoint_dir = '../checkpoints'):
+    model.load_weights('{}/{}'.format(checkpoint_dir,name,save_format='tf')).expect_partial()
+    
         
 class FFJORD(keras.Model):
-    def __init__(self, stacked_mlps, batch_size,num_output,name='FFJORD'):
+    def __init__(self, stacked_mlps, batch_size,num_output,trace_type='hutchinson',name='FFJORD'):
         super(FFJORD, self).__init__()
         self._num_output=num_output
         self._batch_size = batch_size 
         ode_solve_fn = tfp.math.ode.DormandPrince(atol=1e-5).solve
         #Gaussian noise to trace solver
-        trace_augmentation_fn = tfb.ffjord.trace_jacobian_hutchinson
-        #trace_augmentation_fn = tfb.ffjord.trace_jacobian_exact
+        if trace_type=='hutchinson':
+            trace_augmentation_fn = tfb.ffjord.trace_jacobian_hutchinson
+        elif trace_type == 'exact':
+            trace_augmentation_fn = tfb.ffjord.trace_jacobian_exact
+        else:
+            raise Exception("Invalid trace estimator")
+        
         
         bijectors = []
         for imlp,mlp in enumerate(stacked_mlps):
@@ -123,6 +136,16 @@ class FFJORD(keras.Model):
         
         return loss
     
+    @tf.function
+    def conditional_prob(self,_x,_c):
+        prob = self.flow.prob(
+            _x,
+            bijector_kwargs=make_bijector_kwargs(
+                self.flow.bijector, {'bijector.': {'conditional_input': _c}})                                      
+        )
+        
+        return prob
+    
     
     @tf.function()
     def train_step(self, values):
@@ -151,13 +174,16 @@ class FFJORD(keras.Model):
         loss = self.log_loss(data,cond)
         self.loss_tracker.update_state(loss)
         return {"loss": self.loss_tracker.result()}
+    
 
+        
+    
 
 if __name__ == '__main__':
 
-    LR = 1e-2
-    NUM_EPOCHS = 20
-    STACKED_FFJORDS = 4 #Number of stacked transformations
+    LR = 1e-5
+    NUM_EPOCHS = 40
+    STACKED_FFJORDS = 8 #Number of stacked transformations
     NUM_LAYERS = 8 #Hiddden layers per bijector
     NUM_OUTPUT = 2 #Output dimension
     NUM_HIDDEN = 4*NUM_OUTPUT #Hidden layer node size
@@ -186,7 +212,7 @@ if __name__ == '__main__':
         stacked_mlps.append(mlp_model)
 
     #Create the model
-    model = FFJORD(stacked_mlps,BATCH_SIZE,NUM_OUTPUT)
+    model = FFJORD(stacked_mlps,BATCH_SIZE,NUM_OUTPUT,trace_type='exact')
     model.compile(optimizer=keras.optimizers.Adam(learning_rate=LR))
     
     history = model.fit(
@@ -229,5 +255,57 @@ if __name__ == '__main__':
         os.makedirs(plot_folder)
     
     fig.savefig('{}/conditional_gaus.pdf'.format(plot_folder))
+    
+    #Saving the model for future inference
+    save_model(model)
+
+    #Let's create a new model with the same architecture, but with the exact trace estimator
+    new_model = FFJORD(stacked_mlps,BATCH_SIZE,NUM_OUTPUT,trace_type='exact',name='loaded_model')
+    load_model(new_model)
+
+    #Verify that no fluctuations are involded
+    point = [[0,1]]
+    cond = [[1]]
+    print(new_model.conditional_prob(point,cond))
+    print(new_model.conditional_prob(point,cond))
+    print(new_model.conditional_prob(point,cond))
+
+    
+    
+    transformed = new_model.flow.sample(
+        NSAMPLES,
+        bijector_kwargs=make_bijector_kwargs(
+            model.flow.bijector, {'bijector.': {'conditional_input': constrain}})
+    )
+
+    transformed_first = new_model.flow.sample(
+        NSAMPLES,
+        bijector_kwargs=make_bijector_kwargs(
+            model.flow.bijector, {'bijector.': {'conditional_input': np.ones((NSAMPLES,1),dtype=np.float32)}})
+    )
+
+    transformed_second = new_model.flow.sample(
+        NSAMPLES,
+        bijector_kwargs=make_bijector_kwargs(
+            model.flow.bijector, {'bijector.': {'conditional_input': np.zeros((NSAMPLES,1),dtype=np.float32)}})
+    )
+
+    #Plotting with the new model
+    fig = plt.figure(figsize=(8, 6))
+    plt.subplot(211)    
+    plt.scatter(transformed[:, 0], transformed[:, 1], color="r")
+    plt.subplot(212)
+    plt.scatter(transformed_first[:, 0], transformed_first[:, 1], color="r")
+    plt.scatter(transformed_second[:, 0], transformed_second[:, 1], color="b")
+    
+    plot_folder = '../plots'
+    if not os.path.exists(plot_folder):
+        os.makedirs(plot_folder)
+    
+    fig.savefig('{}/new_conditional_gaus.pdf'.format(plot_folder))
+
+    
+    
+    
 
 
