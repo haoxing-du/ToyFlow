@@ -1,0 +1,11 @@
+{
+    'SHAPE':[2],
+    'BATCH':375,
+    'LR':1e-2,
+    'MAXEPOCH':500,
+    'EARLYSTOP':10,
+    'NSTACKED':2,
+    'NLAYERS':4,
+    'LAYER_SIZE':[32,16,8,4],
+    'ACT':'tanh',
+}
