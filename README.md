@@ -36,17 +36,18 @@ Questions:
 
 # Part 3
 
-Now, we are going to run the scripts in parallel using the Perlmutter supercomputer! We emply data parallelization using the [Horovod](https://github.com/horovod/horovod) library to split the data used during training between multiple GPUs.
+Now, we are going to run the scripts in parallel using the Perlmutter supercomputer! We employ data parallelization using the [Horovod](https://github.com/horovod/horovod) library to split the data used during training between multiple GPUs.
 
-To do so we are going to use the script ```toy_paralle.py``` that implements a couple of additional features besides the parallel training. Check it out and compare with the ```toy_conditional.py``` scripts to see the differences.
+To do so we are going to use the script ```toy_parallel.py``` that implements a couple of additional features besides the parallel training. Check it out and compare with the ```toy_conditional.py``` script to see the differences.
 
 A new feature is the implementation of convolutional neural networks as the backbone of the FFJORD implementation. Try out different examples by running the script and changing the parameter ```model_name``` to the available implementations: ```moon, mnist, calorimeter``` and running.
 
 ```bash
 python train_paralle.py --model_name moon
 ```
+Individual settings for each dataset are now defined inside dedicated ```config*.json``` files. Take a look at each of them and identify what the parameters represent within the script.
 
-All implementaions should run out of the box and give you similar distributions as the ones we looked before. For the calorimeter implementation however there are not yet any distributions defined, which observables are useful to compare the performance of the flow model?
+All implementaions should run out of the box and give you similar distributions as the ones we looked before. For the calorimeter implementation however there are not yet any distributions defined. Which observables are useful to compare the performance of the flow model?
 
 
 Up to now we always used a single GPU during training. Let's scale this up and test how the different implementations behave as we try to use **16** GPUs at a time!
@@ -59,15 +60,15 @@ salloc -C gpu -q interactive  -t 30 -n 16 --ntasks-per-node=4  --gpus-per-task=1
 
 Change the -A flag accordingly based on the project number that you are assigned to.
 
-After getting the allocation, you should be almost ready to go. Load any modules you've been using so farand run the script with the srun command:
+After getting the allocation, you should be almost ready to go. Load any modules you've been using so far and run the script with the srun command:
 
 ```bash
 module load tensorflow/2.6.0
-srun python train_paralle.py --model_name moon
+srun python train_parallel.py --model_name moon
 ```
 
-This should be enough to spawn the multiple processes. What is the time difference for each epoch between the multi-GPU implementation and the single GPU implementation?
+This should be enough to run using multiple processes at a time! What is the time difference for each epoch between the multi-GPU implementation and the single GPU implementation?
 
-The last task is to investigate the calorimeter data in more detail. The preprocessing adopted mimics the one used in the [CaloFlow paper](https://arxiv.org/abs/2106.05285). As is, we use the fully-connected model as the backbone implementation for the model. However, we do know that the calorimeter can be represented as a set of 3 images, each representing a layer of the calorimeter, with dimensions: 3x96 (in layer 0), 12x12 (in layer 1), and 12x6 (in layer 3). Since the images hold geometric information of the shower shapes, we expect that the densoty estimation based on convolutions to be better than a simple fully connected model (you can see for yourself, verify the loss value on the MNIST dataset when using a fully connected model and when using the convolutional layers).
+The last task is to investigate the calorimeter data in more detail. The preprocessing adopted mimics the one used in the [CaloFlow paper](https://arxiv.org/abs/2106.05285). As is, we use the fully-connected model as the backbone implementation for the model. However, we do know that the calorimeter can be represented as a set of 3 images, each representing a layer of the calorimeter, with dimensions: 3x96 (in layer 0), 12x12 (in layer 1), and 12x6 (in layer 2). Since the images hold geometric information of the shower shapes, we expect the density estimation based on convolutions to be better than a simple fully connected model (you can see for yourself, verify the loss value on the MNIST dataset when using a fully connected model and when using convolutional layers).
 
 How would you implement a convolutional model for this dataset?
