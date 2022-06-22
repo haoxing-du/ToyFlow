@@ -34,8 +34,8 @@ class BACKBONE_ODE(keras.Model):
         #Transformation applied to conditional inputs
         inputs_time = Input((1))
         inputs_cond = Input((self._num_cond))
-        conditional=inputs_time
-        # conditional = tf.concat([inputs_time,inputs_cond],-1)
+        # conditional=inputs_time
+        conditional = tf.concat([inputs_time,inputs_cond],-1)
 
 
         #The architecture used to model the time-dependent flow are based on an encoder-decoder implementation with additional skip connections (U-NET). Here are simple implementations for each. How can you adapt the convolutional model to be used for the calorimeter dataset? Tip: The calorimeter consists of 3 layers, each with an image-like shape of 3x96, 12x12, and 12x6 
