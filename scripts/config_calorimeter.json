@@ -4,8 +4,10 @@
     'LR':1e-4,
     'MAXEPOCH':500,
     'EARLYSTOP':10,
-    'NSTACKED':1,
-    'NLAYERS':3,
-    'LAYER_SIZE':[1024,512,256],
+    'NSTACKED':4,
+    'NLAYERS':4,
+    'LAYER_SIZE':[4096,2048,1024,512],
     'ACT':'tanh',
+    'MODEL':'calo_gamma2',
+    'REG':0.0,
 }
