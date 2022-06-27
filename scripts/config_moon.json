@@ -8,4 +8,6 @@
     'NLAYERS':4,
     'LAYER_SIZE':[32,16,8,4],
     'ACT':'tanh',
+    'MODEL':'MOON_REG',
+    'REG':0.01,
 }
