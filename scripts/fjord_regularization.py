@@ -294,7 +294,7 @@ class FFJORD(bijector.Bijector):
         self._ode_solve_fn = self._ode_solver.solve
       self._trace_augmentation_fn = trace_augmentation_fn
       self._state_time_derivative_fn = state_time_derivative_fn
-      self.alpha = alpha  
+      self._alpha = alpha  
 
       def inverse_state_time_derivative(time, state, **kwargs):
         return -state_time_derivative_fn(self._final_time - time, state,
@@ -342,8 +342,8 @@ class FFJORD(bijector.Bijector):
                                 constants=condition_kwargs)    
     else:
       y, fldj, kinetic_penalty, jacobian_penalty = self._solve_ode(augmented_ode_fn, augmented_x)
-    return y, {'ildj': -fldj-self.alpha*(jacobian_penalty+kinetic_penalty), 
-               'fldj': fldj+self.alpha*(jacobian_penalty+kinetic_penalty), 
+    return y, {'ildj': -fldj-self._alpha*(jacobian_penalty+kinetic_penalty), 
+               'fldj': fldj+self._alpha*(jacobian_penalty+kinetic_penalty), 
                'kinetic_penalty': kinetic_penalty, 'jacobian_penalty': jacobian_penalty}
 
   def _augmented_inverse(self, y, **condition_kwargs):
@@ -358,8 +358,8 @@ class FFJORD(bijector.Bijector):
                                 constants=condition_kwargs)
     else:
       x, ildj, kinetic_penalty, jacobian_penalty = self._solve_ode(augmented_inv_ode_fn, augmented_y)
-    return x, {'ildj': ildj-self.alpha*(jacobian_penalty+kinetic_penalty), 
-               'fldj': -ildj+self.alpha*(jacobian_penalty+kinetic_penalty), 
+    return x, {'ildj': ildj-self._alpha*(jacobian_penalty+kinetic_penalty), 
+               'fldj': -ildj+self._alpha*(jacobian_penalty+kinetic_penalty), 
                'kinetic_penalty': kinetic_penalty, 'jacobian_penalty': jacobian_penalty}
 
   def _solve_ode_timesteps(self, ode_fn, state, step_size, **kwargs):
@@ -412,7 +412,7 @@ class FFJORD(bijector.Bijector):
       if 'ildj' not in cached or 'jacobian_penalty' not in cached or 'kinetic_penalty' not in cached:  
         _, attrs = self._augmented_inverse(y, **condition_kwargs)
       cached.update(attrs)
-      return cached['ildj'] + self.alpha*(cached['jacobian_penalty']+cached['kinetic_penalty'])
+      return cached['ildj'] + self._alpha*(cached['jacobian_penalty']+cached['kinetic_penalty'])
     if 'ildj' not in cached:
       _, attrs = self._augmented_inverse(y, **condition_kwargs)
       cached.update(attrs)
