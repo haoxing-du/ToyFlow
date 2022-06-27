@@ -47,10 +47,10 @@ python train_paralle.py --model_name moon
 ```
 Individual settings for each dataset are now defined inside dedicated ```config*.json``` files. Take a look at each of them and identify what the parameters represent within the script.
 
-All implementaions should run out of the box and give you similar distributions as the ones we looked before. For the calorimeter implementation however there are not yet any distributions defined. Which observables are useful to compare the performance of the flow model?
+All implementaions should run out of the box and give you similar distributions as the ones we looked before. For the calorimeter implementation however there are not yet any distributions defined. An additional script called ```plot_calo.py``` was added to sample new calorimeter showers from a trained model and quickly plot different distributions.
 
 
-Up to now we always used a single GPU during training. Let's scale this up and test how the different implementations behave as we try to use **16** GPUs at a time!
+Up to now we always used a single GPU during training. Let's scale this up and test how the different implementations behave as we try to use **16** GPUs at a time! We have two options to run the script with multiple GPUs. The first one is to start a ```ssh``` connection on perlmutter and request multiple GPUs with the slurm batch system.
 
 First, hop in to the Perlmutter system through an ssh connection. Once connected, move to the folder you've been using to run your experiments and request 4 iteractive nodes:
 
@@ -66,6 +66,9 @@ After getting the allocation, you should be almost ready to go. Load any modules
 module load tensorflow/2.6.0
 srun python train_parallel.py --model_name moon
 ```
+
+The second option is to use the terminal from **jupyterhub**. When you start a new jupyter session, the exclusive GPU node gives you quick access to 4 GPUs. If you would like to try 16 GPUs as the previous example, you can request by selecting ```Configurable GPU``` and selecting the maximum number of nodes: 4. After that, running the ```srun``` command within the terminal option at jupyterlab should be enough to run the script using the multiple GPUs! 
+
 
 This should be enough to run using multiple processes at a time! What is the time difference for each epoch between the multi-GPU implementation and the single GPU implementation?
 
