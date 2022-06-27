@@ -20,8 +20,7 @@ from tensorflow_probability.python import math as tfp_math
 from tensorflow_probability.python.bijectors import bijector
 from tensorflow_probability.python.internal import cache_util
 from tensorflow_probability.python.internal import prefer_static
-import tensorflow_probability as tfp
-# import horovod.tensorflow as hvd
+
 
 # TODO(b/144156734) Consider moving trace estimators to stand alone module.
 def trace_jacobian_hutchinson(
@@ -112,25 +111,27 @@ def trace_jacobian_exact(ode_fn, state_shape, dtype):
     augmented_ode_fn: `Callable(time, (state, log_det_jac))` that computes
       augmented time derivative `(state_time_derivative, trace_estimation)`.
   """
-  del state_shape, dtype  # Not used by trace_jacobian_exact
-
+  @tf.function 
   def augmented_ode_fn(time, state_log_det_jac, **kwargs):
     """Computes both time derivative and trace of the jacobian."""
     state, _ , _ , _ = state_log_det_jac
-    with tf.GradientTape(persistent=True,
-                         watch_accessed_variables=False) as tape:
+    
+    with tf.GradientTape(watch_accessed_variables=False) as tape:
       tape.watch(state)
       state_time_derivative = ode_fn(time, state, **kwargs)
     
-    jacobian = tape.jacobian(state_time_derivative, state)
-    diag_jac = tf.linalg.diag_part(jacobian)
-    trace_value = diag_jac[:,0]
-    transpose_product = tf.linalg.matmul(jacobian, tf.transpose(jacobian))
-    norm_estimates = tf.linalg.diag_part(transpose_product)
-    norm_estimates = norm_estimates[:,0]
+    jacobian = tape.batch_jacobian(state_time_derivative, state)
+    trace_value = diag_jac = tf.linalg.diag_part(jacobian)
+    
+    norm_estimates = tf.math.reduce_sum(jacobian**2, 2)
     kinetic_estimates = state_time_derivative**2
     
     return state_time_derivative, trace_value, kinetic_estimates, norm_estimates
+    #norm_estimates = tf.expand_dims(norm_estimates, axis=1)
+    #transpose_product = tf.linalg.matmul(jacobian, tf.transpose(jacobian))
+    #norm_estimates = tf.linalg.diag_part(transpose_product)
+    #norm_estimates = norm_estimates[:,0,0]
+    #norm_estimates = tf.expand_dims(norm_estimates, axis=1)
 
   return augmented_ode_fn
 
@@ -238,9 +239,7 @@ class FFJORD(bijector.Bijector):
       validate_args=False,
       dtype=tf.float32,
       name='ffjord',
-      is_training=False,
-      jacobian_factor=0,
-      kinetic_factor=0):
+      alpha = 0.):
     """Constructs a FFJORD bijector.
     Args:
       state_time_derivative_fn: Python `callable` taking arguments `time`
@@ -295,9 +294,8 @@ class FFJORD(bijector.Bijector):
         self._ode_solve_fn = self._ode_solver.solve
       self._trace_augmentation_fn = trace_augmentation_fn
       self._state_time_derivative_fn = state_time_derivative_fn
-      self._kinetic_factor = kinetic_factor
-      self._jacobian_factor = jacobian_factor
-      self._is_training=is_training
+      self.alpha = alpha  
+
       def inverse_state_time_derivative(time, state, **kwargs):
         return -state_time_derivative_fn(self._final_time - time, state,
                                          **kwargs)
@@ -332,7 +330,6 @@ class FFJORD(bijector.Bijector):
         **kwargs)
     final_state = tf.nest.map_structure(
         lambda x: x[-1], integration_result.states)
-    # hvd.mpi_ops.join()
     return final_state
 
   def _augmented_forward(self, x, **condition_kwargs):
@@ -340,30 +337,30 @@ class FFJORD(bijector.Bijector):
     augmented_ode_fn = self._trace_augmentation_fn(
         self._state_time_derivative_fn, prefer_static.shape(x), x.dtype)
     augmented_x = (x, tf.zeros_like(x), tf.zeros_like(x), tf.zeros_like(x))
-    # augmented_x = (x, tf.zeros(1), tf.zeros(1), tf.zeros(1))
     if condition_kwargs:
       y, fldj, kinetic_penalty, jacobian_penalty = self._solve_ode(augmented_ode_fn, augmented_x,
                                 constants=condition_kwargs)    
     else:
       y, fldj, kinetic_penalty, jacobian_penalty = self._solve_ode(augmented_ode_fn, augmented_x)
-    return y, {'ildj': -fldj, 'fldj': fldj, 'kinetic_penalty': kinetic_penalty, 'jacobian_penalty': jacobian_penalty}
+    return y, {'ildj': -fldj-self.alpha*(jacobian_penalty+kinetic_penalty), 
+               'fldj': fldj+self.alpha*(jacobian_penalty+kinetic_penalty), 
+               'kinetic_penalty': kinetic_penalty, 'jacobian_penalty': jacobian_penalty}
 
   def _augmented_inverse(self, y, **condition_kwargs):
     """Computes inverse and inverse_log_det_jacobian transformations."""
     augmented_inv_ode_fn = self._trace_augmentation_fn(
         self._inv_state_time_derivative_fn, prefer_static.shape(y), y.dtype)
     augmented_y = (y, tf.zeros_like(y), tf.zeros_like(y), tf.zeros_like(y))
+    jacobian_factor = condition_kwargs.pop('jacobian_factor', 0.)
+    #kinetic_factor = condition_kwargs.pop('kinetic_factor', 0.)
     if condition_kwargs:
       x, ildj, kinetic_penalty, jacobian_penalty = self._solve_ode(augmented_inv_ode_fn, augmented_y,
                                 constants=condition_kwargs)
     else:
       x, ildj, kinetic_penalty, jacobian_penalty = self._solve_ode(augmented_inv_ode_fn, augmented_y)
-    if self._is_training:#return the regularized version
-      ildj_return = ildj - (self._kinetic_factor*kinetic_penalty+self._jacobian_factor*jacobian_penalty)
-    else:
-      ildj_return = ildj
-        
-    return x, {'ildj': ildj_return, 'fldj': -ildj, 'kinetic_penalty': kinetic_penalty, 'jacobian_penalty': jacobian_penalty}
+    return x, {'ildj': ildj-self.alpha*(jacobian_penalty+kinetic_penalty), 
+               'fldj': -ildj+self.alpha*(jacobian_penalty+kinetic_penalty), 
+               'kinetic_penalty': kinetic_penalty, 'jacobian_penalty': jacobian_penalty}
 
   def _solve_ode_timesteps(self, ode_fn, state, step_size, **kwargs):
     integration_result = self._ode_solve_fn(
@@ -388,7 +385,7 @@ class FFJORD(bijector.Bijector):
       y, fldj, kinetic_penalty, jacobian_penalty = self._solve_ode_timesteps(augmented_ode_fn, augmented_x, step_size)
     return y, {'ildj': -fldj, 'fldj': fldj, 'kinetic_penalty': kinetic_penalty, 'jacobian_penalty': jacobian_penalty}
 
-  def _forward(self, x, **kwargs):
+  def _forward(self, x, **kwargs): 
     y, _ = self._augmented_forward(x, **kwargs)
     return y
 
@@ -407,18 +404,16 @@ class FFJORD(bijector.Bijector):
       _, attrs = self._augmented_forward(x, **condition_kwargs)
       cached.update(attrs)
     return cached['fldj']
-
-  def _inverse_log_det_jacobian(self, y, **condition_kwargs):
+    
+  def _inverse_log_det_jacobian(self, y, **condition_kwargs): #used for training as well as conditional probabilities
     cached = self._cache.inverse_attributes(y)
-    # If LDJ isn't in the cache, call inverse once.
+    # If values aren't in the cache, call inverse once
+    if 'eval' in condition_kwargs:
+      if 'ildj' not in cached or 'jacobian_penalty' not in cached or 'kinetic_penalty' not in cached:  
+        _, attrs = self._augmented_inverse(y, **condition_kwargs)
+      cached.update(attrs)
+      return cached['ildj'] + self.alpha*(cached['jacobian_penalty']+cached['kinetic_penalty'])
     if 'ildj' not in cached:
       _, attrs = self._augmented_inverse(y, **condition_kwargs)
       cached.update(attrs)
-    return cached['ildj'] 
-
-  def _regularization_loss(self, y, **condition_kwargs):
-    cached = self._cache.inverse_attributes(y)
-    if 'kinetic_penalty' not in cached or 'jacobian_penalty' not in cached:
-      x, attrs = self._augmented_inverse(y, **condition_kwargs)
-      cached.update(attrs)
-    return x, cached['kinetic_penalty'] * self._kinetic_factor + cached['jacobian_penalty'] * self._jacobian_factor
+    return cached['ildj']
