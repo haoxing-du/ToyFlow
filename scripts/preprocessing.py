@@ -16,6 +16,31 @@ def LoadJson(file_name):
     JSONPATH = os.path.join(file_name)
     return yaml.safe_load(open(JSONPATH))
 
+def ReverseNorm(e,e_layer,e_voxel):
+    '''Revert the transformations applied to the training set'''    
+    alpha = 1e-6
+    
+    gen_energy = 10**(e+1)
+    # layer_norm = 10**(e_layer)*gen_energy
+
+    exp = np.exp(e_layer)    
+    x = exp/(1+exp)
+    u_norm = (x-alpha)/(1 - 2*alpha)
+    
+    layer_norm= np.zeros(u_norm.shape,dtype=np.float32)
+    layer_norm[:,0] = np.squeeze(gen_energy)*u_norm[:,0]*u_norm[:,1]
+    layer_norm[:,1] = np.squeeze(gen_energy)*u_norm[:,0]*u_norm[:,2]*(1-u_norm[:,1])
+    layer_norm[:,2] = np.squeeze(gen_energy)*u_norm[:,0]*(1-u_norm[:,1])*(1-u_norm[:,2])
+
+    
+    exp = np.exp(e_voxel)    
+    x = exp/(1+exp)
+    voxel = (x-alpha)/(1 - 2*alpha)
+    voxel[:,:288] = voxel[:,:288] * np.expand_dims(layer_norm[:,0],-1)/np.sum(voxel[:,:288],-1,keepdims=True)
+    voxel[:,288:432] = voxel[:,288:432] * np.expand_dims(layer_norm[:,1],-1)/np.sum(voxel[:,288:432],-1,keepdims=True)
+    voxel[:,432:] = voxel[:,432:] * np.expand_dims(layer_norm[:,2],-1)/np.sum(voxel[:,432:],-1,keepdims=True)
+    
+    return gen_energy,voxel
 
 def DataLoader(file_name,nevts=-1):
     '''
@@ -55,7 +80,7 @@ def DataLoader(file_name,nevts=-1):
         #Log transform from caloflow paper
         alpha = 1e-6
         x = alpha + (1 - 2*alpha)*data_flat
-        shower = np.ma.log10(x/(1-x)).filled(0)    
+        shower = np.ma.log(x/(1-x)).filled(0)
 
         
         return energy_layer,shower
@@ -65,9 +90,22 @@ def DataLoader(file_name,nevts=-1):
     for il, layer in enumerate([layer1,layer2]):
         energy ,shower = preprocessing(np.nan_to_num(layer))
         flat_energy = np.concatenate((flat_energy,energy),-1)
-        flat_shower = np.concatenate((flat_shower,shower),-1)        
+        flat_shower = np.concatenate((flat_shower,shower),-1)
+
+    def convert_energies(e,layer_energies):
+        converted = np.zeros(layer_energies.shape,dtype=np.float32)
+        #CaloFlow FLow 1
+        converted[:,0] = np.sum(layer_energies,-1)/np.squeeze(e)
+        converted[:,1] = layer_energies[:,0]/np.sum(layer_energies,-1)
+        converted[:,2] = layer_energies[:,1]/np.sum(layer_energies[:,1:],-1)
+        alpha = 1e-6
         
-    return np.log10(e),np.ma.log10(flat_energy/e),flat_shower
+        x = alpha + (1 - 2*alpha)*converted
+        converted = np.ma.log(x/(1-x)).filled(0)
+        return converted
+        
+    flat_energy = convert_energies(e,flat_energy)
+    return np.log10(e/10.),flat_energy,flat_shower
 
 
 def Calo_prep(file_path,nevts=-1):
@@ -102,10 +140,16 @@ def MNIST_prep(X,y,nevts=-1):
     y = y.reshape((-1,1))[hvd.rank():nevts:hvd.size()] #Split dataset equally between GPUs
     y = y.astype('float32')/10.0
     
-    X = X.reshape(-1,28,28,1)[hvd.rank():nevts:hvd.size()]
+    X = X.reshape(-1,28*28)[hvd.rank():nevts:hvd.size()]
     X = X.astype('float32')
     X+=np.random.uniform(0,1,X.shape)
     X /= 256.0
+
+    alpha = 1e-6
+    x = alpha + (1 - 2*alpha)*X
+    X = np.ma.log(x/(1-x)).filled(0)
+    
+    # X= 2*X-1
     
     tf_data = tf.data.Dataset.from_tensor_slices(X)
     tf_cond = tf.data.Dataset.from_tensor_slices(y)

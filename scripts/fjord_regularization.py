@@ -117,20 +117,33 @@ def trace_jacobian_exact(ode_fn, state_shape, dtype):
   def augmented_ode_fn(time, state_log_det_jac, **kwargs):
     """Computes both time derivative and trace of the jacobian."""
     state, _ , _ , _ = state_log_det_jac
-    with tf.GradientTape(persistent=True,
-                         watch_accessed_variables=False) as tape:
-      tape.watch(state)
-      state_time_derivative = ode_fn(time, state, **kwargs)
+    ode_fn_with_time = lambda x: ode_fn(time, x, **kwargs)
+    batch_shape = [prefer_static.size0(state)]
+    state_time_derivative, diag_jac = tfp_math.diag_jacobian(
+      xs=state, fn=ode_fn_with_time, sample_shape=batch_shape)
+    # tfp_math.diag_jacobian returns lists
+    if isinstance(state_time_derivative, list):
+      state_time_derivative = state_time_derivative[0]
+    if isinstance(diag_jac, list):
+      diag_jac = diag_jac[0]
+    trace_value = diag_jac
+    return state_time_derivative, trace_value, state_time_derivative**2, trace_value**2
+
+    #The memory allocation seems to explode, luckily we only need this part for sampling
     
-    jacobian = tape.jacobian(state_time_derivative, state)
-    diag_jac = tf.linalg.diag_part(jacobian)
-    trace_value = diag_jac[:,0]
-    transpose_product = tf.linalg.matmul(jacobian, tf.transpose(jacobian))
-    norm_estimates = tf.linalg.diag_part(transpose_product)
-    norm_estimates = norm_estimates[:,0]
-    kinetic_estimates = state_time_derivative**2
+    # with tf.GradientTape(persistent=True,
+    #                      watch_accessed_variables=False) as tape:
+    #   tape.watch(state)
+    #   state_time_derivative = ode_fn(time, state, **kwargs)
     
-    return state_time_derivative, trace_value, kinetic_estimates, norm_estimates
+    # jacobian = tape.batch_jacobian(state_time_derivative, state)
+    # trace_value = diag_jac = tf.linalg.diag_part(jacobian)
+    
+    # norm_estimates = tf.math.reduce_sum(jacobian**2, 2)
+    # kinetic_estimates = state_time_derivative**2
+
+    
+    # return state_time_derivative, trace_value, kinetic_estimates, norm_estimates
 
   return augmented_ode_fn
 
