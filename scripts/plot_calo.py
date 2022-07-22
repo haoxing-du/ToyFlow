@@ -15,7 +15,7 @@ hvd.init()
 utils.SetStyle()
 parser = argparse.ArgumentParser()
 
-parser.add_argument('--data_folder', default='/pscratch/sd/v/vmikuni/SGM/gamma.hdf5', help='Path to calorimeter dataset used during training')
+parser.add_argument('--data_folder', default='/global/cfs/cdirs/m3246/haoxing_du/sampling_gamma_corr.hdf5', help='Path to calorimeter dataset used during training')
 parser.add_argument('--plot_folder', default='../plots', help='Path to store plot files')
 parser.add_argument('--nevts', type=float,default=30000, help='Number of events to load')
 parser.add_argument('--config', default='config_calorimeter.json', help='Training parameters')

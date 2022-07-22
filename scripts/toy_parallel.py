@@ -5,7 +5,7 @@ from tensorflow import keras
 from tensorflow.keras import layers, Input
 import time
 import matplotlib.pyplot as plt
-from tensorflow.keras.callbacks import ReduceLROnPlateau,EarlyStopping
+from tensorflow.keras.callbacks import ReduceLROnPlateau,EarlyStopping, ModelCheckpoint#, BackupAndRestore
 import horovod.tensorflow.keras as hvd
 import preprocessing
 import argparse
@@ -101,9 +101,9 @@ class BACKBONE_ODE(keras.Model):
                                        stride=1,padding='same')
         skip_layers.append(layer_encoded)
         for ilayer in range(1,nlayers):
-            # layer_encoded = layers.Conv2D(conv_sizes[ilayer],activation=self.activation,
-            #                               kernel_size=kernel_size,padding='same',
-            #                               strides=1)(layer_encoded)
+            layer_encoded = layers.Conv2D(conv_sizes[ilayer],activation=self.activation,
+                                          kernel_size=kernel_size,padding='same',
+                                          strides=1)(layer_encoded)
 
             layer_encoded = self.time_conv(layer_encoded,time_embed,conv_sizes[ilayer],
                                            kernel_size=kernel_size,padding='same',
@@ -120,10 +120,10 @@ class BACKBONE_ODE(keras.Model):
         #Decoder
         layer_decoded = skip_layers[0]
         for ilayer in range(len(skip_layers)-1):
-            # layer_decoded = layers.Conv2D(conv_sizes[len(skip_layers)-2-ilayer],
-            #                               kernel_size=kernel_size,padding="same",
-            #                               strides=1,
-            #                               activation=self.activation)(layer_decoded)
+            layer_decoded = layers.Conv2D(conv_sizes[len(skip_layers)-2-ilayer],
+                                          kernel_size=kernel_size,padding="same",
+                                          strides=1,
+                                          activation=self.activation)(layer_decoded)
 
             layer_decoded = self.time_conv(layer_decoded,time_embed,
                                            conv_sizes[len(skip_layers)-2-ilayer],
@@ -142,9 +142,9 @@ class BACKBONE_ODE(keras.Model):
             
         outputs = layers.Conv2D(1,kernel_size=1,padding="same",
                                 strides=1,activation=None,use_bias=True)(layer_decoded)
-        # outputs = self.time_conv(layer_decoded,time_embed,
-        #                          1,kernel_size=kernel_size,padding='same',
-        #                          stride=1,activation=False)
+        outputs = self.time_conv(layer_decoded,time_embed,
+                                 1,kernel_size=kernel_size,padding='same',
+                                 stride=1,activation=False)
         
 
 
@@ -213,10 +213,10 @@ def make_bijector_kwargs(bijector, name_to_kwargs):
 def save_model(model,name="ffjord",checkpoint_dir = '../checkpoints'):
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
-    model.save_weights('{}/{}'.format(checkpoint_dir,name,save_format='tf'))
+    model.save_weights('{}/{}'.format(checkpoint_dir,name))
 
 def load_model(model,name="ffjord",checkpoint_dir = '../checkpoints'):
-    model.load_weights('{}/{}'.format(checkpoint_dir,name,save_format='tf')).expect_partial()
+    model.load_weights('{}/{}'.format(checkpoint_dir,name)).expect_partial()
     
         
 class FFJORD(keras.Model):
@@ -296,6 +296,12 @@ class FFJORD(keras.Model):
         
         return prob
     
+    def conditional_log_prob(self,_x,_c):
+        return self.flow.log_prob(
+            _x,
+            bijector_kwargs=make_bijector_kwargs(
+                self.flow.bijector, {'bijector.': {'conditional': _c}})                                      
+        )
     
     @tf.function()
     def train_step(self, inputs):
@@ -334,11 +340,13 @@ if __name__ == '__main__':
     if gpus:
         tf.config.experimental.set_visible_devices(gpus[hvd.local_rank()], 'GPU')
 
-
+    print(f"hvd.rank: {hvd.rank()}")
+    print(f"hvd.local_rank: {hvd.local_rank()}")
+    print(f"hvd.size: {hvd.size()}")
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('--data_folder', default='/pscratch/sd/v/vmikuni/SGM/gamma.hdf5', help='Path to calorimeter dataset used during training')
-    parser.add_argument('--model_name', default='moon', help='Name of the model to train. Options are: mnist, moon, calorimeter')
+    parser.add_argument('--data_folder', default='/global/cfs/cdirs/m3246/haoxing_du/sampling_gamma_corr.hdf5', help='Path to calorimeter dataset used during training')
+    parser.add_argument('--model_name', default='calorimeter', help='Name of the model to train. Options are: mnist, moon, calorimeter')
     parser.add_argument('--load', action='store_true', default=False,help='Load pretrained weights to continue the training')
     flags = parser.parse_args()
 
@@ -387,8 +395,9 @@ if __name__ == '__main__':
 
     #Create the model
     model = FFJORD(stacked_convs,int(np.prod(dataset_config['SHAPE'])), config=dataset_config)
-    if flags.load:
-        load_model(model,checkpoint_dir='../checkpoint_{}'.format(dataset_config['MODEL']))
+    #if flags.load and hvd.rank() == 0:
+    #if flags.load:
+    #    load_model(model,checkpoint_dir='../checkpoint_{}'.format(dataset_config['MODEL']))
 
     opt = tf.optimizers.Adam(LR)
 
@@ -397,19 +406,38 @@ if __name__ == '__main__':
         opt, backward_passes_per_step=1, average_aggregated_gradients=True)
     
     model.compile(optimizer=opt,experimental_run_tf_function=False)
+    if flags.load:
+        model.train_on_batch(np.zeros((1,dataset_config['SHAPE'][0])),np.zeros((1,1)))
+        load_model(model,checkpoint_dir='../checkpoint_{}'.format(dataset_config['MODEL']))
 
+    trainableParams = np.sum([np.prod(v.get_shape()) for v in model.trainable_weights])
+    nonTrainableParams = np.sum([np.prod(v.get_shape()) for v in model.non_trainable_weights])
+    totalParams = trainableParams + nonTrainableParams
+    print(f"Number of trainable params: {trainableParams}")
+    print(f"Number of nontrainable params: {nonTrainableParams}")
+    print(f"Number of total params: {totalParams}")
+    
     callbacks = [
         hvd.callbacks.BroadcastGlobalVariablesCallback(0),
         hvd.callbacks.MetricAverageCallback(),
         # hvd.callbacks.LearningRateWarmupCallback(
         #     initial_lr=LR*np.sqrt(hvd.size()), warmup_epochs=3,
         #     verbose=hvd.rank() == 0),
-        ReduceLROnPlateau(patience=5, factor=0.1,
+        ReduceLROnPlateau(patience=5, factor=0.1, cooldown=5,
                           min_lr=1e-7,verbose=hvd.rank() == 0),
         EarlyStopping(patience=dataset_config['EARLYSTOP'],restore_best_weights=True),
     ]
 
-    
+    if hvd.rank() == 0:
+        callbacks.append(ModelCheckpoint(
+            filepath='../tmp/checkpoint',
+            monitor='val_loss',
+            mode='min',
+            save_best_only=True,
+            save_weights_only=True,))
+        #    #period=10))
+        #callbacks.append(BackupAndRestore(backup_dir="../tmp"))
+
     history = model.fit(
         samples_train.batch(BATCH_SIZE),
         steps_per_epoch=int(ntrain/BATCH_SIZE),
@@ -420,14 +448,18 @@ if __name__ == '__main__':
         callbacks=callbacks,
     )
 
+    val_loss_array = history.history['val_loss']
+    with open('val_loss.npy', 'wb') as f:
+        np.save(f, val_loss_array)
+
     if hvd.rank() == 0:
         plot_folder = '../plots'
         if not os.path.exists(plot_folder):
             os.makedirs(plot_folder)
             
         save_model(model,checkpoint_dir='../checkpoint_{}'.format(dataset_config['MODEL']))
-        new_model = FFJORD(stacked_convs,int(np.prod(dataset_config['SHAPE'])),is_training=False, config=dataset_config)
-        load_model(new_model,checkpoint_dir='../checkpoint_{}'.format(dataset_config['MODEL']))
+        #new_model = FFJORD(stacked_convs,int(np.prod(dataset_config['SHAPE'])),is_training=False, config=dataset_config)
+        #load_model(new_model,checkpoint_dir='../checkpoint_{}'.format(dataset_config['MODEL']))
 
         
         if model_name == 'moon':
